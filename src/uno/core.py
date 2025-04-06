@@ -75,7 +75,7 @@ class Client:
     Client for a Uno NATS service.
     """
 
-    def __init__(self, service_name: str, nc: nats.client.Client):
+    def __init__(self, service_name: str, nc: nats.NATS):
         self.name = service_name
         self.nc = nc
 
