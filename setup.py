@@ -5,7 +5,8 @@ setup(
     version="0.1.0a",
     description="Microservices micro-framework for NATS",
     author="@appetio",
-    packages=find_packages(),
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     install_requires=[
         "nats-py>=2.0.0",
         "asyncio"
