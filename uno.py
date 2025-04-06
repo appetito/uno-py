@@ -69,6 +69,34 @@ class Service:
         return decorator
 
 
+class RequestError(Exception):
+    pass
+
+
+class Client:
+    """
+    Client for a Uno NATS service.
+    """
+
+    def __init__(self, service_name: str, nc: nats.client.Client):
+        self.name = service_name
+        self.nc = nc
+
+    async def request(self, endpoint: str, payload: dict | None = None):
+        subject = "{}.{}".format(self.name, endpoint)
+        logger.debug("Requesting endpoint %s, payload: %s", subject, payload)
+        if payload is None:
+            payload = {}
+        data = json.dumps(payload).encode()
+        msg = await self.nc.request(subject, data)
+        response = json.loads(msg.data.decode())
+        if response["status"] != "OK":
+            logger.error("Request to %s failed: %s", subject,response["error"])
+            raise RequestError(response["error"])
+        logger.debug("Response of %s: %s", subject, response)
+        return response["result"]
+
+
 
 def start_nats_service(name: str, servers: str):
     service = NatsService(name, servers)
