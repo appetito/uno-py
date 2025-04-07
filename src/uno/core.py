@@ -23,6 +23,7 @@ class Handler:
     async def call(self, msg):
         try:
             request = json.loads(msg.data)
+            logger.debug("Request to endpoint %s, payload: %s", self.handler, request)
             result = await self.handler(request)
             response = {"result": result, "status": "OK"}
             response_encoded = json.dumps(response).encode()
@@ -79,13 +80,13 @@ class Client:
         self.name = service_name
         self.nc = nc
 
-    async def request(self, endpoint: str, payload: dict | None = None):
+    async def request(self, endpoint: str, payload: dict | None = None, timeout: int = 2):
         subject = "{}.{}".format(self.name, endpoint)
         logger.debug("Requesting endpoint %s, payload: %s", subject, payload)
         if payload is None:
             payload = {}
         data = json.dumps(payload).encode()
-        msg = await self.nc.request(subject, data)
+        msg = await self.nc.request(subject, data, timeout=timeout)
         response = json.loads(msg.data.decode())
         if response["status"] != "OK":
             logger.error("Request to %s failed: %s", subject,response["error"])
