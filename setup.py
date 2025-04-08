@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="uno",
-    version="0.1.0a",
+    version="0.1.0",
     description="Microservices micro-framework for NATS",
     author="@appetio",
     packages=find_packages(where="src"),

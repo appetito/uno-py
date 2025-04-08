@@ -4,8 +4,7 @@ Uno - Microservices micro-framework for NATS
 from .core import (
     Service,
     Client,
-    Handler,
-    Endpoint,
+    handler,
     RequestError,
     start_nats_service
 )

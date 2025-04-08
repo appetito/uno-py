@@ -5,64 +5,128 @@ import logging
 from json import JSONDecodeError
 
 import nats
+from nats.aio.msg import Msg
 
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class Endpoint:
-    endpoint: str
-    handler: callable
+STATUS_OK = "OK"
+STATUS_INVALID_REQUEST = "INVALID_REQUEST"
+STATUS_INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
-class Handler:
-    def __init__(self, handler: callable):
-        self.handler = handler
+def handler(endpoint: str):
+    """
+    Decorator to register a handler for a specific endpoint.
 
-    async def call(self, msg):
-        try:
-            request = json.loads(msg.data)
-            logger.debug("Request to endpoint %s, payload: %s", self.handler, request)
-            result = await self.handler(request)
-            response = {"result": result, "status": "OK"}
-            response_encoded = json.dumps(response).encode()
-        except JSONDecodeError as e:
-            logger.error(f"Nats handler {self.handler} invalid request: {msg.data}")
-            response = {"error": str(e), "status": "INVALID_REQUEST"}
-            response_encoded = json.dumps(response).encode()
-        except Exception as e:
-            logger.exception(f"Nats handler {self.handler} error")
-            response = {"error": str(e), "status": "INTERNAL_ERROR"}
-            response_encoded = json.dumps(response).encode()
-        await msg.respond(response_encoded)
+    Args:
+        endpoint (str): The endpoint to register the handler for.
+
+    Example:
+
+        class TestService(Service):
+            @handler("test")
+            async def test_handler(self, request):
+                pass
+
+    """
+    def decorator(f: callable):
+        f.__uno_endpoint__ = endpoint
+        return f
+    return decorator
 
 
-class Service:
+class ServiceMeta(type):
+    def __new__(cls, name, bases, attrs):
+        handlers = {}
 
-    def __init__(self, name: str, servers: str):
+        for attr_name, attr_value in attrs.items():
+            if hasattr(attr_value, '__uno_endpoint__'):
+                endpoint = attr_value.__uno_endpoint__
+                # handlers[endpoint] = Handler(endpoint, attr_value) #attr_value
+                handlers[endpoint] = attr_name
+        # Store the handlers in the class
+        attrs['_handlers'] = handlers
+        return super().__new__(cls, name, bases, attrs)
+
+
+class Service(metaclass=ServiceMeta):
+    """
+    A service is a collection of handlers for different endpoints.
+
+    Args:
+        name (str): The name of the service.
+        servers (str): The NATS servers to connect to.
+    """
+
+    def __init__(self, name: str, servers: str ):
         self.name = name
         self.servers = servers
         self.nc = None
-        self.__endpoints = []
+        self._is_running = False
 
     async def run(self):
+        logger.info("Starting service %s", self.name)
         self.nc = await nats.connect(self.servers)
-        logger.info("Connected to nats %s", self.__endpoints)
+        logger.info("Connected to NATS")
         await self.subscribe_endpoints()
-        while True:
+        self._is_running = True
+        while self._is_running:
             await asyncio.sleep(1)
+        await self.nc.close()
+        logger.info("Service %s stopped", self.name)
+
+    async def dispatch(self, msg: Msg):
+        subject = msg.subject
+        endpoint = msg.subject.split(".")[-1]
+        handler_attr_name = self._handlers[endpoint]
+        handler = getattr(self, handler_attr_name)
+
+        try:
+            request = json.loads(msg.data)
+            logger.debug(f"Handling request to endpoint {subject}, payload: {request}")
+            result = await handler(request)
+            response = {"result": result, "status": STATUS_OK}
+            response_encoded = json.dumps(response).encode()
+        except JSONDecodeError as e:
+            logger.error(f"Invalid request to endpoint {subject}: {msg.data}")
+            response = {"error": str(e), "status": STATUS_INVALID_REQUEST}
+            response_encoded = json.dumps(response).encode()
+        except Exception as e:
+            logger.exception(f"Handler {subject} error")
+            response = {"error": str(e), "status": STATUS_INTERNAL_ERROR}
+            response_encoded = json.dumps(response).encode()
+        await msg.respond(response_encoded)
+        # await handler(msg)
+        
+    def stop(self):
+        logger.info("Stopping service %s", self.name)
+        self._is_running = False
 
     async def subscribe_endpoints(self):
-        for ep in self.__endpoints:
-            logger.info("Subscribing to endpoint %s.%s", self.name, ep.endpoint)
-            await self.nc.subscribe("{}.{}".format(self.name, ep.endpoint), cb=ep.handler.call)
+        for endpoint, handler in self._handlers.items():
+            logger.info("Subscribing to endpoint %s.%s", self.name, endpoint)
+            await self.nc.subscribe("{}.{}".format(self.name, endpoint), cb=self.dispatch)
 
     def endpoint(self, endpoint: str):
+        """
+        Register a handler for a specific endpoint.
+
+        Args:
+            endpoint (str): The endpoint to register the handler for.
+
+        Example:
+            svc = Service("test", "nats://localhost:4222")
+            @svc.endpoint("test")
+            def test_handler(request):
+                pass
+        """
+
         logger.info("Registering endpoint %s.%s", self.name, endpoint)
         def decorator(f: callable):
-            ep = Endpoint(endpoint, Handler(f))
-            self.__endpoints.append(ep)
+            handler = Handler(endpoint, f)
+            self._handlers[endpoint] = handler
             return f
         return decorator
 
