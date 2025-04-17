@@ -83,6 +83,7 @@ class Service(metaclass=ServiceMeta):
         while self._is_running:
             await asyncio.sleep(1)
         await self.nc.close()
+        await asyncio.sleep(2)
         logger.info("Service %s stopped", self.name)
 
     async def dispatch(self, msg: Msg):
