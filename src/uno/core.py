@@ -6,6 +6,8 @@ from json import JSONDecodeError
 
 import nats
 from nats.aio.msg import Msg
+import logfire
+from logfire.propagate import attach_context, get_context
 
 
 logger = logging.getLogger(__name__)
@@ -82,22 +84,29 @@ class Service(metaclass=ServiceMeta):
         endpoint = msg.subject.split(".")[-1]
         handler_attr_name = self._handlers[endpoint]
         handler = getattr(self, handler_attr_name)
-
         try:
-            request = json.loads(msg.data)
-            logger.debug(f"Handling request to endpoint {subject}, payload: {request}")
-            result = await handler(request)
-            response = {"result": result, "status": STATUS_OK}
-            response_encoded = json.dumps(response).encode()
-        except JSONDecodeError as e:
-            logger.error(f"Invalid request to endpoint {subject}: {msg.data}")
-            response = {"error": str(e), "status": STATUS_INVALID_REQUEST}
-            response_encoded = json.dumps(response).encode()
-        except Exception as e:
-            logger.exception(f"Handler {subject} error")
-            response = {"error": str(e), "status": STATUS_INTERNAL_ERROR}
-            response_encoded = json.dumps(response).encode()
-        await msg.respond(response_encoded)
+            ctx = json.loads(msg.header.get("baggage", "{}"))
+        except JSONDecodeError:
+            ctx = {}
+            logger.debug("Invalid baggage header: %s", msg.header.get("baggage", None))
+        with attach_context(ctx):
+            try:
+                request = json.loads(msg.data)
+                logger.debug(f"Handling request to endpoint {subject}, payload: {request}")
+                with logfire.span(f"uno handle {subject}") as span:
+                    span.set_attribute("rpc.system", "uno")
+                    result = await handler(request)
+                response = {"result": result, "status": STATUS_OK}
+                response_encoded = json.dumps(response).encode()
+            except JSONDecodeError as e:
+                logger.error(f"Invalid request to endpoint {subject}: {msg.data}")
+                response = {"error": str(e), "status": STATUS_INVALID_REQUEST}
+                response_encoded = json.dumps(response).encode()
+            except Exception as e:
+                logger.exception(f"Handler {subject} error")
+                response = {"error": str(e), "status": STATUS_INTERNAL_ERROR}
+                response_encoded = json.dumps(response).encode()
+            await msg.respond(response_encoded)
         # await handler(msg)
         
     def stop(self):
@@ -146,17 +155,21 @@ class Client:
 
     async def request(self, endpoint: str, payload: dict | None = None, timeout: int = 2):
         subject = "{}.{}".format(self.name, endpoint)
-        logger.debug("Requesting endpoint %s, payload: %s", subject, payload)
-        if payload is None:
-            payload = {}
-        data = json.dumps(payload).encode()
-        msg = await self.nc.request(subject, data, timeout=timeout)
-        response = json.loads(msg.data.decode())
-        if response["status"] != "OK":
-            logger.error("Request to %s failed: %s", subject,response["error"])
-            raise RequestError(response["error"])
-        logger.debug("Response of %s: %s", subject, response)
-        return response["result"]
+        with logfire.span(f"uno call {subject}") as span:
+            span.set_attribute("rpc.system", "uno")
+            logger.debug("Requesting endpoint %s, payload: %s", subject, payload)
+            ctx = get_context()
+            headers = {"baggage": json.dumps(ctx)}
+            if payload is None:
+                payload = {}
+            data = json.dumps(payload).encode()
+            msg = await self.nc.request(subject, data, timeout=timeout, headers=headers)
+            response = json.loads(msg.data.decode())
+            if response["status"] != "OK":
+                logger.error("Request to %s failed: %s", subject, response["error"])
+                raise RequestError(response["error"])
+            logger.debug("Response of %s: %s", subject, response)
+            return response["result"]
 
 
 def start_nats_service(name: str, servers: str):

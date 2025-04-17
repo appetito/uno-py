@@ -9,7 +9,8 @@ setup(
     package_dir={"": "src"},
     install_requires=[
         "nats-py>=2.0.0",
-        "asyncio"
+        "logfire",
+        "asyncio",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
