@@ -3,6 +3,7 @@ import dataclasses
 import json
 import logging
 from json import JSONDecodeError
+import signal
 
 import nats
 from nats.aio.msg import Msg
@@ -69,6 +70,11 @@ class Service(metaclass=ServiceMeta):
         self._is_running = False
 
     async def run(self):
+
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGTERM, self.stop)
+        loop.add_signal_handler(signal.SIGINT, self.stop)
+
         logger.info("Starting service %s", self.name)
         self.nc = await nats.connect(self.servers)
         logger.info("Connected to NATS")
