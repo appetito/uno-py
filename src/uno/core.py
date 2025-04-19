@@ -91,11 +91,7 @@ class Service(metaclass=ServiceMeta):
         endpoint = msg.subject.split(".")[-1]
         handler_attr_name = self._handlers[endpoint]
         handler = getattr(self, handler_attr_name)
-        try:
-            ctx = json.loads(msg.header.get("baggage", "{}"))
-        except JSONDecodeError:
-            ctx = {}
-            logger.debug("Invalid baggage header: %s", msg.header.get("baggage", None))
+        ctx = _extract_ctx(msg)
         with attach_context(ctx):
             try:
                 request = json.loads(msg.data)
@@ -149,6 +145,17 @@ class Service(metaclass=ServiceMeta):
 
 class RequestError(Exception):
     pass
+
+
+def _extract_ctx(msg: Msg) -> dict:
+    ctx = {}
+    if msg.headers:
+        try:
+            ctx = json.loads(msg.header.get("baggage", "{}"))
+        except JSONDecodeError:
+            ctx = {}
+            logger.debug("Invalid baggage header: %s", msg.header.get("baggage", None))
+    return ctx
 
 
 class Client:
