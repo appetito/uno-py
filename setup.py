@@ -22,4 +22,9 @@ setup(
         "Topic :: Software Development :: Libraries :: Application Frameworks",
     ],
     python_requires=">=3.9",
+    entry_points={
+        "console_scripts": [
+            "uno=uno.cli:main",
+        ]
+    }
 )
